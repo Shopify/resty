@@ -730,10 +730,14 @@ func (r *Request) Send() (*Response, error) {
 // Execute method performs the HTTP request with given HTTP method and URL
 // for current `Request`.
 // 		resp, err := client.R().Execute(resty.GET, "http://httpbin.org/get")
-func (r *Request) Execute(method, url string) (*Response, error) {
+func (r *Request) Execute(method, url string) (resp *Response, err error) {
+	defer func() {
+		if err != nil {
+			err = r.client.onErrorHooks(r, resp, err)
+		}
+	}()
+
 	var addrs []*net.SRV
-	var resp *Response
-	var err error
 
 	if r.isMultiPart && !(method == MethodPost || method == MethodPut || method == MethodPatch) {
 		// No OnError hook here since this is a request validation error
@@ -743,7 +747,6 @@ func (r *Request) Execute(method, url string) (*Response, error) {
 	if r.SRV != nil {
 		_, addrs, err = net.LookupSRV(r.SRV.Service, "tcp", r.SRV.Domain)
 		if err != nil {
-			r.client.onErrorHooks(r, nil, err)
 			return nil, err
 		}
 	}
@@ -753,9 +756,7 @@ func (r *Request) Execute(method, url string) (*Response, error) {
 
 	if r.client.RetryCount == 0 {
 		r.Attempt = 1
-		resp, err = r.client.execute(r)
-		r.client.onErrorHooks(r, resp, unwrapNoRetryErr(err))
-		return resp, unwrapNoRetryErr(err)
+		return r.client.execute(r)
 	}
 
 	err = Backoff(
@@ -778,9 +779,7 @@ func (r *Request) Execute(method, url string) (*Response, error) {
 		RetryHooks(r.client.RetryHooks),
 	)
 
-	r.client.onErrorHooks(r, resp, unwrapNoRetryErr(err))
-
-	return resp, unwrapNoRetryErr(err)
+	return resp, err
 }
 
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾

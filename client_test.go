@@ -7,6 +7,7 @@ package resty
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -733,6 +734,57 @@ func TestClientOnResponseError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestErrorMiddleware(t *testing.T) {
+	ts := createGetServer(t)
+	defer ts.Close()
+
+
+	t.Run("swallow", func(t *testing.T) {
+		c := dc()
+		c.OnAfterResponse(func(client *Client, response *Response) error {
+			return fmt.Errorf("after response")
+		}).AddErrorMiddleware(func(request *Request, response *Response, err error) error {
+			return nil
+		})
+
+		resp, err := c.R().Get(ts.URL)
+		assertEqual(t, 200, resp.StatusCode())
+		assertNil(t, err)
+		assertEqual(t, "middleware: after response", err.Error())
+	})
+
+	t.Run("wrap", func(t *testing.T) {
+		c := dc()
+		c.OnAfterResponse(func(client *Client, response *Response) error {
+			return fmt.Errorf("after response")
+		}).AddErrorMiddleware(func(request *Request, response *Response, err error) error {
+			return fmt.Errorf("middleware: %w", err)
+		})
+
+		resp, err := c.R().Get(ts.URL)
+		assertEqual(t, 200, resp.StatusCode())
+		assertEqual(t, "middleware: after response", err.Error())
+	})
+
+	t.Run("json", func(t *testing.T) {
+		c := dc()
+		c.AddErrorMiddleware(func(request *Request, response *Response, err error) error {
+			var jsonErr *json.SyntaxError
+			if errors.As(err, &jsonErr) {
+				return fmt.Errorf("invalid JSON")
+			}
+			return err
+		})
+
+		resp, err := c.R().
+			SetError(map[string]interface{}{}).
+			ForceContentType("application/json").
+			Get(ts.URL + "/status?code=503")
+		assertEqual(t, 503, resp.StatusCode())
+		assertEqual(t, "invalid JSON", err.Error())
+	})
 }
 
 func TestResponseError(t *testing.T) {

@@ -58,6 +58,10 @@ func createGetServer(t *testing.T) *httptest.Server {
 			case "/long-json":
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"TestGet": "JSON response with size > 30"}`))
+			case "/status":
+				status, _ := strconv.Atoi(r.URL.Query().Get("code"))
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(http.StatusText(status)))
 			case "/mypage":
 				w.WriteHeader(http.StatusBadRequest)
 			case "/mypage2":

@@ -82,7 +82,10 @@ type (
 	// ResponseLogCallback type is for response logs, called before the response is logged
 	ResponseLogCallback func(*ResponseLog) error
 
-	// ErrorHook type is for reacting to request errors, called after all retries were attempted
+	// ErrorMiddleware type is to transform errors, called after all retries were attempted
+	ErrorMiddleware func(*Request, *Response, error) error
+
+	// ErrorHook type is for reacting to request errors, called after the error middlewares
 	ErrorHook func(*Request, error)
 )
 
@@ -136,6 +139,7 @@ type Client struct {
 	requestLog         RequestLogCallback
 	responseLog        ResponseLogCallback
 	errorHooks         []ErrorHook
+	errorMiddlewares   []ErrorMiddleware
 }
 
 // User type is to hold an username and password information
@@ -404,6 +408,26 @@ func (c *Client) OnBeforeRequest(m RequestMiddleware) *Client {
 //			})
 func (c *Client) OnAfterResponse(m ResponseMiddleware) *Client {
 	c.afterResponse = append(c.afterResponse, m)
+	return c
+}
+
+// AddErrorMiddleware method adds a callback that will be run whenever a request execution fails.
+// This is called after all retries have been attempted (if any).
+// The returned error will become the new error.
+// If returning nil, the error will be swallowed and not exposed to the caller.
+// This can be useful to coalesce errors into something more meaningful to the user.
+//
+// Note that the response can be nil
+//
+//		client.AddErrorMiddleware(func(req *resty.Request, resp *resty.Response, err error) error {
+//          var netErr net.Error
+//			if errors.As(err, &netErr) && netErr.Timeout() {
+//				return ErrTimeout // custom error
+//			}
+//			return err
+//		})
+func (c *Client) AddErrorMiddleware(m ErrorMiddleware) *Client {
+	c.errorMiddlewares = append(c.errorMiddlewares, m)
 	return c
 }
 
@@ -999,17 +1023,20 @@ func (e *ResponseError) Unwrap() error {
 }
 
 // Helper to run onErrorHooks hooks.
-// It wraps the error in a ResponseError if the resp is not nil
-// so hooks can access it.
-func (c *Client) onErrorHooks(req *Request, resp *Response, err error) {
-	if err != nil {
-		if resp != nil { // wrap with ResponseError
-			err = &ResponseError{Response: resp, Err: err}
-		}
-		for _, h := range c.errorHooks {
-			h(req, err)
+// Note that wrapResponseError will wrap the error in a ResponseError such that hooks can access the response.
+func (c *Client) onErrorHooks(req *Request, resp *Response, err error) error {
+	for _, m := range c.errorMiddlewares {
+		err = m(req, resp, err)
+		if err == nil {
+			return nil
 		}
 	}
+
+	for _, h := range c.errorHooks {
+		h(req, err)
+	}
+
+	return err
 }
 
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
@@ -1085,6 +1112,10 @@ func createClient(hc *http.Client) *Client {
 		responseLogger,
 		parseResponseBody,
 		saveResponseIntoFile,
+	}
+
+	c.errorMiddlewares = []ErrorMiddleware{
+		wrapResponseError,
 	}
 
 	return c

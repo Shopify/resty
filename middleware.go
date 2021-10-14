@@ -542,3 +542,11 @@ func getBodyCopy(r *Request) (*bytes.Buffer, error) {
 	}
 	return nil, nil
 }
+
+func wrapResponseError(req *Request, resp *Response, err error) error {
+	err = unwrapNoRetryErr(err)
+	if resp != nil { // wrap with ResponseError
+		err = &ResponseError{Response: resp, Err: err}
+	}
+	return err
+}
