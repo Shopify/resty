@@ -879,14 +879,14 @@ func (c *Client) execute(req *Request) (*Response, error) {
 	// to modify the *resty.Request object
 	for _, f := range c.udBeforeRequest {
 		if err = f(c, req); err != nil {
-			return nil, wrapNoRetryErr(err)
+			return nil, err
 		}
 	}
 
 	// resty middlewares
 	for _, f := range c.beforeRequest {
 		if err = f(c, req); err != nil {
-			return nil, wrapNoRetryErr(err)
+			return nil, err
 		}
 	}
 
@@ -897,12 +897,12 @@ func (c *Client) execute(req *Request) (*Response, error) {
 	// call pre-request if defined
 	if c.preReqHook != nil {
 		if err = c.preReqHook(c, req.RawRequest); err != nil {
-			return nil, wrapNoRetryErr(err)
+			return nil, err
 		}
 	}
 
 	if err = requestLogger(c, req); err != nil {
-		return nil, wrapNoRetryErr(err)
+		return nil, err
 	}
 
 	req.RawRequest.Body = newRequestBodyReleaser(req.RawRequest.Body, req.bodyBuf)
@@ -917,7 +917,7 @@ func (c *Client) execute(req *Request) (*Response, error) {
 
 	if err != nil || req.notParseResponse || c.notParseResponse {
 		response.setReceivedAt()
-		return response, err
+		return response, wrapTemporaryError(err)
 	}
 
 	if !req.isSaveResponse {
@@ -930,7 +930,7 @@ func (c *Client) execute(req *Request) (*Response, error) {
 				body, err = gzip.NewReader(body)
 				if err != nil {
 					response.setReceivedAt()
-					return response, err
+					return response, wrapTemporaryError(err)
 				}
 				defer closeq(body)
 			}
@@ -938,7 +938,7 @@ func (c *Client) execute(req *Request) (*Response, error) {
 
 		if response.body, err = ioutil.ReadAll(body); err != nil {
 			response.setReceivedAt()
-			return response, err
+			return response, wrapTemporaryError(err)
 		}
 
 		response.size = int64(len(response.body))
@@ -953,7 +953,7 @@ func (c *Client) execute(req *Request) (*Response, error) {
 		}
 	}
 
-	return response, wrapNoRetryErr(err)
+	return response, err
 }
 
 // getting TLS client config if not exists then create one
