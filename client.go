@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -98,7 +99,8 @@ type (
 // Resty also provides an options to override most of the client settings
 // at request level.
 type Client struct {
-	HostURL               string
+	BaseURL               string
+	HostURL               string // Deprecated: use BaseURL instead. To be removed in v3.0.0 release.
 	QueryParam            url.Values
 	FormData              url.Values
 	PathParams            map[string]string
@@ -119,6 +121,8 @@ type Client struct {
 	RetryAfter            RetryAfterFunc
 	JSONMarshal           func(v interface{}) ([]byte, error)
 	JSONUnmarshal         func(data []byte, v interface{}) error
+	XMLMarshal            func(v interface{}) ([]byte, error)
+	XMLUnmarshal          func(data []byte, v interface{}) error
 
 	// HeaderAuthorizationKey is used to set/access Request Authorization header
 	// value when `SetAuthToken` option is used.
@@ -161,8 +165,25 @@ type User struct {
 //
 //		// Setting HTTPS address
 //		client.SetHostURL("https://myjeeva.com")
+//
+// Deprecated: use SetBaseURL instead. To be removed in v3.0.0 release.
 func (c *Client) SetHostURL(url string) *Client {
-	c.HostURL = strings.TrimRight(url, "/")
+	c.SetBaseURL(url)
+	return c
+}
+
+// SetBaseURL method is to set Base URL in the client instance. It will be used with request
+// raised from this client with relative URL
+//		// Setting HTTP address
+//		client.SetBaseURL("http://myjeeva.com")
+//
+//		// Setting HTTPS address
+//		client.SetBaseURL("https://myjeeva.com")
+//
+// Since v2.7.0
+func (c *Client) SetBaseURL(url string) *Client {
+	c.BaseURL = strings.TrimRight(url, "/")
+	c.HostURL = c.BaseURL
 	return c
 }
 
@@ -1085,13 +1106,16 @@ func createClient(hc *http.Client) *Client {
 		Cookies:                make([]*http.Cookie, 0),
 		RetryWaitTime:          defaultWaitTime,
 		RetryMaxWaitTime:       defaultMaxWaitTime,
+		PathParams:             make(map[string]string),
 		JSONMarshal:            json.Marshal,
 		JSONUnmarshal:          json.Unmarshal,
+		XMLMarshal:             xml.Marshal,
+		XMLUnmarshal:           xml.Unmarshal,
 		HeaderAuthorizationKey: http.CanonicalHeaderKey("Authorization"),
-		jsonEscapeHTML:         true,
-		httpClient:             hc,
-		debugBodySizeLimit:     math.MaxInt32,
-		PathParams:             make(map[string]string),
+
+		jsonEscapeHTML:     true,
+		httpClient:         hc,
+		debugBodySizeLimit: math.MaxInt32,
 	}
 
 	// Logger
