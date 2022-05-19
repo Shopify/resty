@@ -599,6 +599,8 @@ func (r *Request) SetCookies(rs []*http.Cookie) *Request {
 // The request will retry if any of the functions return true and error is nil.
 //
 // Note: These retry conditions are checked before all retry conditions of the client.
+//
+// Since v2.7.0
 func (r *Request) AddRetryCondition(condition RetryConditionFunc) *Request {
 	r.retryConditions = append(r.retryConditions, condition)
 	return r
@@ -753,8 +755,9 @@ func (r *Request) Execute(method, url string) (*Response, error) {
 
 	if r.client.RetryCount == 0 {
 		r.Attempt = 1
+		resp, err = r.client.executor(r)
 		r.client.onErrorHooks(r, resp, err)
-		return r.client.executor(r)
+		return resp, err
 	}
 
 	err = Backoff(
