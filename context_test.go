@@ -160,6 +160,61 @@ func TestSetContextCancelRetry(t *testing.T) {
 	}
 }
 
+// TestSetContextDeadlineStopsRetries ensures that when the user-provided
+// request context hits its deadline, [Request.Execute] stops its retry loop
+// and returns promptly with context.DeadlineExceeded.
+//
+// The current contract is that the subsequent backoff timer / ctx.Done()
+// select below this block catches the dead context and stops the loop. This
+// test pins that behavior so any future change to that control flow (or to
+// the backoff select) is caught.
+func TestSetContextDeadlineStopsRetries(t *testing.T) {
+	var reqCount int32
+	ts := createTestServer(func(w http.ResponseWriter, r *http.Request) {
+		reqCount++
+		// Sleep longer than the parent ctx deadline so every attempt collides
+		// with the deadline.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(500 * time.Millisecond):
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	c := dcnl().AddRetryConditions(func(_ *Response, err error) bool {
+		return err != nil
+	})
+
+	start := time.Now()
+	resp, err := c.R().
+		SetContext(ctx).
+		SetRetryCount(5).
+		SetRetryWaitTime(time.Millisecond).
+		SetRetryMaxWaitTime(time.Millisecond).
+		Get(ts.URL + "/")
+	elapsed := time.Since(start)
+
+	assertErrorIs(t, context.DeadlineExceeded, err, "expected context deadline exceeded error")
+
+	// The first attempt burns the ctx deadline. Resty must stop the retry
+	// loop as soon as it observes the dead context, without cycling through
+	// any further attempts (even "no-op" ones that fail locally at Do()).
+	if resp.Request.Attempt != 1 {
+		t.Errorf("expected Resty to stop after 1 attempt once ctx deadline hit, got Attempt=%d (reqCount=%d)",
+			resp.Request.Attempt, reqCount)
+	}
+
+	// And Execute must return close to the deadline, not keep spinning
+	// through backoff waits.
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Execute ran well past ctx deadline: elapsed=%s", elapsed)
+	}
+}
+
 func TestSetContextCancelWithError(t *testing.T) {
 	ch := make(chan struct{})
 	ts := createTestServer(func(w http.ResponseWriter, r *http.Request) {
