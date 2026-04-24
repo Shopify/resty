@@ -2493,6 +2493,8 @@ func (c *Client) execute(req *Request) (*Response, error) {
 
 		response.Body = resp.Body
 		if err = response.wrapContentDecompresser(); err != nil {
+			// Drain and close the raw response body so the underlying TCP connection can be reused.
+			drainBody(response)
 			return response, response.wrapError(err, false)
 		}
 

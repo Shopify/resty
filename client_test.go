@@ -20,6 +20,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1101,6 +1102,47 @@ func TestLzwCompress(t *testing.T) {
 		assertEqual(t, tc.want, resp.String())
 
 		logResponse(t, resp)
+	}
+}
+
+func TestContentDecompresserNotFoundDoesNotLeakBody(t *testing.T) {
+	var (
+		ports = make(map[string]struct{})
+		mu    sync.Mutex
+	)
+
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(hdrContentTypeKey, plainTextType)
+		w.Header().Set(hdrContentEncodingKey, "mysterious-xyz")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("payload bytes resty cannot decompress"))
+	}))
+	// Track remote addresses of connections to count unique client connections.
+	ts.Config.ConnState = func(c net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			mu.Lock()
+			ports[c.RemoteAddr().String()] = struct{}{}
+			mu.Unlock()
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+
+	c := dcnl()
+	const N = 10
+	for i := 0; i < N; i++ {
+		_, err := c.R().Get(ts.URL)
+		assertErrorIs(t, ErrContentDecompresserNotFound, err)
+		// Common caller pattern: see err, discard resp. Don't manually close body.
+	}
+
+	mu.Lock()
+	numConns := len(ports)
+	mu.Unlock()
+
+	if numConns != 1 {
+		t.Errorf("response body leaked on ErrContentDecompresserNotFound: got %d distinct client connections across %d requests, want 1 (keep-alive reuse)",
+			numConns, N)
 	}
 }
 
